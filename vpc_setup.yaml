@@ -1,0 +1,132 @@
+# This template will create the required VPC setup for establishing cross-account or a 
+# cross-region AWS Glue connection. It will create the following components:
+# A VPC with:
+#       1 Public Subnet
+#       1 Private Subnet
+# An Internet Gateway, and route for outbound traffic from public subnet through Internet Gateway 
+# A NAT Gateway, and route for outbbound traffic from private subnet through NAT Gateway
+
+Parameters:
+    VPCForGlueCIDR: 
+        Description: Please enter the IP range (CIDR notation) for this VPC
+        Type: String
+        Default: 10.192.0.0/16
+
+    GluePublicSubnetCIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+        Type: String
+        Default: 10.192.10.0/24
+
+    GluePrivateSubnetCIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+        Type: String
+        Default: 10.192.20.0/24
+
+Resources:
+  VPCForGlue:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VPCForGlueCIDR
+      Tags:
+        - Key: Name
+          Value: VPCForGlue
+ 
+  GluePublicSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPCForGlue
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref GluePublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: GluePublicSubnet
+      
+  GluePrivateSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPCForGlue
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref GluePrivateSubnetCIDR
+      MapPublicIpOnLaunch: false     
+      Tags:
+        - Key: Name
+          Value: 'GluePrivateSubnet'
+  
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IGForOutgoingGlueTraffic
+        - Key: Network
+          Value: Public
+  
+  InternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPCForGlue
+      InternetGatewayId: !Ref InternetGateway
+  
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPCForGlue
+      Tags:
+        - Key: Network
+          Value: Public
+        - Key: Name
+          Value: GluePublicRouteTable
+  
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+ 
+  GluePublicSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref GluePublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+       
+  NatPublicIP:
+    Type: "AWS::EC2::EIP"
+    DependsOn: VPCForGlue
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: "AWS::EC2::NatGateway"
+    DependsOn: NatPublicIP
+    Properties: 
+      AllocationId: !GetAtt NatPublicIP.AllocationId
+      SubnetId: !Ref GluePublicSubnet
+      Tags:
+        - Key: Name
+          Value: GlueNatGateway
+ 
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPCForGlue
+      Tags:
+        - Key: Network
+          Value: Private
+        - Key: Name
+          Value: GluePrivateRouteTable
+  
+  PrivateRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+ 
+  GluePrivateSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref GluePrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
